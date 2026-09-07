@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "217167684754",
+    "project_id": "st-step-staff",
+    "storage_bucket": "st-step-staff.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:217167684754:android:4587c6d2cb67804bafb24b",
+        "android_client_info": {
+          "package_name": "com.example.my_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC6vVt8Rwzy26GoqsVLDvjz3sllBdoAhlE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

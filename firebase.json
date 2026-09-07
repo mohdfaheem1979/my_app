@@ -1,0 +1,60 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "st-step-staff",
+          "appId": "1:217167684754:android:4587c6d2cb67804bafb24b",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "st-step-staff",
+          "configurations": {
+            "android": "1:217167684754:android:4587c6d2cb67804bafb24b",
+            "ios": "1:217167684754:ios:1abffd7ad2752ba1afb24b",
+            "macos": "1:217167684754:ios:1abffd7ad2752ba1afb24b",
+            "web": "1:217167684754:web:2ba0e5a7ac8fa32bafb24b",
+            "windows": "1:217167684754:web:8fb23fcc5a955990afb24b"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run lint"
+      ]
+    }
+  ],
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "functions": {
+      "port": 5001
+    },
+    "ui": {
+      "enabled": true
+    },
+    "singleProjectMode": true
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "asia-south2",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}
