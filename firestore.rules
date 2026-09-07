@@ -17,42 +17,25 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return activeUser() &&
-        myUser().role == 'admin';
+      return activeUser() && myUser().role == 'admin';
     }
 
     function isParticipant() {
-      return activeUser() &&
-        resource.data.participants.hasAny([request.auth.uid]);
-    }
-
-    function isChatAdmin() {
-      return activeUser() &&
-        (
-          resource.data.adminId == request.auth.uid ||
-          resource.data.admins.hasAny([request.auth.uid])
-        );
+      return activeUser()
+        && resource.data.participants.hasAny([request.auth.uid]);
     }
 
     match /users/{uid} {
-      allow read: if activeUser() &&
-        (
-          request.auth.uid == uid ||
-          isAdmin() ||
-          resource.data.active == true
-        );
+      allow read: if activeUser()
+        && (request.auth.uid == uid
+        || isAdmin()
+        || resource.data.active == true);
 
-      allow create: if isAdmin() ||
-        (
-          signedIn() &&
-          request.auth.uid == uid
-        );
+      allow create: if isAdmin()
+        || (signedIn() && request.auth.uid == uid);
 
-      allow update: if isAdmin() ||
-        (
-          signedIn() &&
-          request.auth.uid == uid
-        );
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == uid);
 
       allow delete: if isAdmin();
     }
@@ -60,66 +43,51 @@ service cloud.firestore {
     match /chats/{chatId} {
       allow read: if isParticipant();
 
-      allow create: if activeUser() &&
-        request.resource.data.participants.hasAny([
-          request.auth.uid
+      allow create: if activeUser()
+        && request.resource.data.participants.hasAny([request.auth.uid]);
+
+      allow update: if isParticipant()
+        && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly([
+          'lastMessage',
+          'lastMessageBy',
+          'lastMessageAt',
+          'updatedAt',
+          'typing',
+          'typingAt',
+          'participants',
+          'participantNames',
+          'participantEmails',
+          'name',
+          'groupName'
         ]);
 
-      allow update: if isParticipant() &&
-        (
-          request.resource.data
-              .diff(resource.data)
-              .affectedKeys()
-              .hasOnly([
-                'lastMessage',
-                'lastMessageBy',
-                'lastMessageAt',
-                'updatedAt'
-              ])
-          ||
-          (
-            isChatAdmin() &&
-            request.resource.data
-                .diff(resource.data)
-                .affectedKeys()
-                .hasOnly([
-                  'name',
-                  'groupName',
-                  'participants',
-                  'participantNames',
-                  'participantEmails',
-                  'lastMessage',
-                  'lastMessageBy',
-                  'lastMessageAt',
-                  'updatedAt'
-                ])
-          )
-        );
-
-      allow delete: if isAdmin() || isChatAdmin();
+      allow delete: if isAdmin();
 
       match /messages/{messageId} {
-        allow read: if activeUser() &&
-          get(
+        allow read: if activeUser()
+          && get(
             /databases/$(database)/documents/chats/$(chatId)
           ).data.participants.hasAny([request.auth.uid]);
 
-        allow create: if activeUser() &&
-          request.resource.data.senderUid == request.auth.uid &&
-          get(
+        allow create: if activeUser()
+          && request.resource.data.senderUid == request.auth.uid
+          && get(
             /databases/$(database)/documents/chats/$(chatId)
           ).data.participants.hasAny([request.auth.uid]);
 
-        allow update: if activeUser() &&
-          (
-            resource.data.senderUid == request.auth.uid ||
-            isAdmin()
+        allow update: if activeUser()
+          && (
+            resource.data.senderUid == request.auth.uid
+            || get(
+              /databases/$(database)/documents/chats/$(chatId)
+            ).data.participants.hasAny([request.auth.uid])
           );
 
-        allow delete: if activeUser() &&
-          (
-            resource.data.senderUid == request.auth.uid ||
-            isAdmin()
+        allow delete: if activeUser()
+          && (
+            resource.data.senderUid == request.auth.uid
+            || isAdmin()
           );
       }
     }

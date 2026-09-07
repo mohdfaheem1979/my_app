@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -16,12 +14,9 @@ String directChatId(String a, String b) {
 
 String fmtTime(dynamic value) {
   if (value is! Timestamp) return '';
-
-  final date = value.toDate();
-  final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
-
-  return '$hour:${date.minute.toString().padLeft(2, '0')} '
-      '${date.hour >= 12 ? 'PM' : 'AM'}';
+  final d = value.toDate();
+  final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+  return '$h:${d.minute.toString().padLeft(2, '0')} ${d.hour >= 12 ? 'PM' : 'AM'}';
 }
 
 class IndividualChatPage extends StatelessWidget {
@@ -40,16 +35,16 @@ class IndividualChatPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+    final me = FirebaseAuth.instance.currentUser;
 
-    if (user == null) {
+    if (me == null) {
       return const Scaffold(
         body: Center(child: Text('Please log in again.')),
       );
     }
 
     return ChatPage(
-      chatId: directChatId(user.uid, userId),
+      chatId: directChatId(me.uid, userId),
       title: userName,
       isGroup: false,
       otherUserId: userId,
@@ -105,25 +100,17 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
-  final messageController = TextEditingController();
-  final scrollController = ScrollController();
-
-  Timer? typingTimer;
+  final message = TextEditingController();
+  final scroll = ScrollController();
   bool sending = false;
-  bool settingTyping = false;
 
   DocumentReference<Map<String, dynamic>> get chatRef =>
       FirebaseFirestore.instance.collection('chats').doc(widget.chatId);
 
-  CollectionReference<Map<String, dynamic>> get messagesRef =>
-      chatRef.collection('messages');
-
   @override
   void dispose() {
-    typingTimer?.cancel();
-    _setTyping(false);
-    messageController.dispose();
-    scrollController.dispose();
+    message.dispose();
+    scroll.dispose();
     super.dispose();
   }
 
@@ -131,8 +118,8 @@ class _ChatPageState extends State<ChatPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('User is not logged in.');
 
-    final snapshot = await chatRef.get();
-    if (snapshot.exists) return;
+    final existing = await chatRef.get();
+    if (existing.exists) return;
 
     final otherId = widget.otherUserId;
 
@@ -145,82 +132,36 @@ class _ChatPageState extends State<ChatPage> {
       ],
       'participantNames': {
         user.uid: user.displayName ?? user.email ?? 'User',
-        if (otherId != null)
-          otherId: widget.otherUserName ?? 'User',
+        if (otherId != null) otherId: widget.otherUserName ?? 'User',
       },
       'participantEmails': {
         user.uid: user.email ?? '',
-        if (otherId != null)
-          otherId: widget.otherUserEmail ?? '',
+        if (otherId != null) otherId: widget.otherUserEmail ?? '',
       },
       if (widget.isGroup) 'adminId': user.uid,
       if (widget.isGroup) 'admins': [user.uid],
-      'typing': <String, dynamic>{},
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
-  Future<void> _setTyping(bool value) async {
-    if (settingTyping) return;
-
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    settingTyping = true;
-
-    try {
-      await _ensureChat();
-
-      await chatRef.set({
-        'typing': {
-          user.uid: value,
-        },
-        'typingAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    } catch (_) {
-      // Typing status should not interrupt messaging.
-    } finally {
-      settingTyping = false;
-    }
-  }
-
-  void _onTextChanged(String value) {
-    typingTimer?.cancel();
-
-    if (value.trim().isEmpty) {
-      _setTyping(false);
-      return;
-    }
-
-    _setTyping(true);
-
-    typingTimer = Timer(
-      const Duration(seconds: 2),
-      () => _setTyping(false),
-    );
-  }
-
   Future<void> sendText() async {
-    final text = messageController.text.trim();
+    final text = message.text.trim();
     final user = FirebaseAuth.instance.currentUser;
 
     if (text.isEmpty || user == null) return;
 
     setState(() => sending = true);
-    typingTimer?.cancel();
 
     try {
       await _ensureChat();
-      await _setTyping(false);
 
-      await messagesRef.add({
+      await chatRef.collection('messages').add({
         'senderUid': user.uid,
         'senderName': user.displayName ?? user.email ?? 'User',
         'text': text,
         'type': 'text',
         'edited': false,
-        'readBy': [user.uid],
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -231,10 +172,10 @@ class _ChatPageState extends State<ChatPage> {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      messageController.clear();
+      message.clear();
       _scrollBottom();
     } catch (e) {
-      _showMessage('Message failed: $e');
+      _snack('Message failed: $e');
     } finally {
       if (mounted) setState(() => sending = false);
     }
@@ -242,10 +183,11 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> pickFile() async {
     try {
-      final result = await FilePicker.pickFiles();
-      if (result == null || result.files.isEmpty) return;
+      final files = await FilePicker.pickFiles();
 
-      final file = result.files.first;
+      if (files.isEmpty) return;
+
+      final file = files.first;
       final bytes = await file.readAsBytes();
       final user = FirebaseAuth.instance.currentUser;
 
@@ -253,22 +195,17 @@ class _ChatPageState extends State<ChatPage> {
 
       setState(() => sending = true);
       await _ensureChat();
-      await _setTyping(false);
 
-      final safeName = file.name.replaceAll(
-        RegExp(r'[^\w.\-]'),
-        '_',
-      );
+      final safeName = file.name.replaceAll(RegExp(r'[^\w.\-]'), '_');
 
       final storageRef = FirebaseStorage.instance.ref(
-        'chat_files/${widget.chatId}/'
-        '${DateTime.now().millisecondsSinceEpoch}_$safeName',
+        'chat_files/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}_$safeName',
       );
 
       await storageRef.putData(bytes);
       final url = await storageRef.getDownloadURL();
 
-      await messagesRef.add({
+      await chatRef.collection('messages').add({
         'senderUid': user.uid,
         'senderName': user.displayName ?? user.email ?? 'User',
         'text': '',
@@ -276,7 +213,6 @@ class _ChatPageState extends State<ChatPage> {
         'fileUrl': url,
         'fileName': file.name,
         'fileSize': bytes.length,
-        'readBy': [user.uid],
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -289,44 +225,14 @@ class _ChatPageState extends State<ChatPage> {
 
       _scrollBottom();
     } catch (e) {
-      _showMessage('Upload failed: $e');
+      _snack('Upload failed: $e');
     } finally {
       if (mounted) setState(() => sending = false);
     }
   }
 
-  Future<void> _markMessagesRead(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    final batch = FirebaseFirestore.instance.batch();
-    var changed = false;
-
-    for (final doc in docs) {
-      final data = doc.data();
-      if (data['senderUid'] == user.uid) continue;
-
-      final readBy = List<String>.from(data['readBy'] ?? <String>[]);
-
-      if (!readBy.contains(user.uid)) {
-        batch.update(
-          doc.reference,
-          {'readBy': FieldValue.arrayUnion([user.uid])},
-        );
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      await batch.commit();
-    }
-  }
-
   Future<void> _openFile(String url) async {
     if (url.isEmpty) return;
-
     await launchUrl(
       Uri.parse(url),
       mode: LaunchMode.externalApplication,
@@ -335,59 +241,33 @@ class _ChatPageState extends State<ChatPage> {
 
   void _scrollBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!scrollController.hasClients) return;
-
-      scrollController.animateTo(
-        scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
-      );
+      if (scroll.hasClients) {
+        scroll.animateTo(
+          scroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 
-  void _showMessage(String text) {
+  void _snack(String text) {
     if (!mounted) return;
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(text)),
     );
   }
 
-  bool _isSomeoneTyping(Map<String, dynamic> data) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return false;
-
-    final typing = Map<String, dynamic>.from(
-      data['typing'] ?? <String, dynamic>{},
-    );
-
-    return typing.entries.any(
-      (entry) => entry.key != user.uid && entry.value == true,
-    );
-  }
-
-  Widget _messageBubble(
-    DocumentSnapshot<Map<String, dynamic>> document,
-  ) {
-    final data = document.data() ?? {};
-    final user = FirebaseAuth.instance.currentUser;
-    final mine = data['senderUid'] == user?.uid;
+  Widget _messageBubble(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+    final mine = data['senderUid'] == FirebaseAuth.instance.currentUser?.uid;
     final type = (data['type'] ?? 'text').toString();
-
-    final readBy = List<String>.from(
-      data['readBy'] ?? <String>[],
-    );
-
-    final isRead = readBy.any((uid) => uid != user?.uid);
 
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         constraints: const BoxConstraints(maxWidth: 560),
-        margin: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 4,
-        ),
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: mine
@@ -405,9 +285,7 @@ class _ChatPageState extends State<ChatPage> {
               ),
             if (type == 'file')
               InkWell(
-                onTap: () => _openFile(
-                  (data['fileUrl'] ?? '').toString(),
-                ),
+                onTap: () => _openFile((data['fileUrl'] ?? '').toString()),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -423,29 +301,11 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               )
             else
-              SelectableText(
-                (data['text'] ?? '').toString(),
-              ),
+              SelectableText((data['text'] ?? '').toString()),
             const SizedBox(height: 4),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  fmtTime(data['createdAt']),
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: Colors.grey,
-                  ),
-                ),
-                if (mine) ...[
-                  const SizedBox(width: 5),
-                  Icon(
-                    isRead ? Icons.done_all : Icons.done,
-                    size: 15,
-                    color: isRead ? Colors.blue : Colors.grey,
-                  ),
-                ],
-              ],
+            Text(
+              fmtTime(data['createdAt']),
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
             ),
           ],
         ),
@@ -455,57 +315,32 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    final messagesStream = messagesRef
+    final messages = chatRef
+        .collection('messages')
         .orderBy('createdAt')
         .snapshots();
 
     return Scaffold(
       appBar: AppBar(
-        title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: chatRef.snapshots(),
-          builder: (context, snapshot) {
-            final data = snapshot.data?.data() ?? {};
-            final typing = _isSomeoneTyping(data);
-
-            return Row(
-              children: [
-                if (!widget.isGroup)
-                  CircleAvatar(
-                    backgroundImage:
-                        widget.otherPhotoUrl?.isNotEmpty == true
-                            ? NetworkImage(widget.otherPhotoUrl!)
-                            : null,
-                    child: widget.otherPhotoUrl?.isNotEmpty == true
-                        ? null
-                        : Text(
-                            widget.title.isEmpty
-                                ? '?'
-                                : widget.title[0].toUpperCase(),
-                          ),
-                  ),
-                if (!widget.isGroup) const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.title,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (typing)
-                        const Text(
-                          'typing...',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.green,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
+        title: Row(
+          children: [
+            if (!widget.isGroup)
+              CircleAvatar(
+                backgroundImage: widget.otherPhotoUrl?.isNotEmpty == true
+                    ? NetworkImage(widget.otherPhotoUrl!)
+                    : null,
+                child: widget.otherPhotoUrl?.isNotEmpty == true
+                    ? null
+                    : Text(widget.title.isEmpty ? '?' : widget.title[0]),
+              ),
+            if (!widget.isGroup) const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                widget.title,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
         actions: [
           if (widget.isGroup)
@@ -515,9 +350,7 @@ class _ChatPageState extends State<ChatPage> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => GroupInfoScreen(
-                      chatId: widget.chatId,
-                    ),
+                    builder: (_) => GroupInfoScreen(chatId: widget.chatId),
                   ),
                 );
               },
@@ -527,15 +360,13 @@ class _ChatPageState extends State<ChatPage> {
       body: Column(
         children: [
           Expanded(
-            child: StreamBuilder<
-                QuerySnapshot<Map<String, dynamic>>>(
-              stream: messagesStream,
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: messages,
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Center(
                     child: Text(
-                      'Unable to load messages.\n'
-                      '${snapshot.error}',
+                      'Unable to load messages.\n${snapshot.error}',
                     ),
                   );
                 }
@@ -546,25 +377,22 @@ class _ChatPageState extends State<ChatPage> {
                   );
                 }
 
-                final documents = snapshot.data!.docs;
+                final docs = snapshot.data!.docs;
 
-                if (documents.isEmpty) {
+                if (docs.isEmpty) {
                   return const Center(
-                    child: Text(
-                      'No messages yet. Start the conversation.',
-                    ),
+                    child: Text('No messages yet. Start the conversation.'),
                   );
                 }
 
-                _markMessagesRead(documents);
                 _scrollBottom();
 
                 return ListView.builder(
-                  controller: scrollController,
+                  controller: scroll,
                   padding: const EdgeInsets.symmetric(vertical: 10),
-                  itemCount: documents.length,
-                  itemBuilder: (context, index) {
-                    return _messageBubble(documents[index]);
+                  itemCount: docs.length,
+                  itemBuilder: (_, index) {
+                    return _messageBubble(docs[index]);
                   },
                 );
               },
@@ -582,11 +410,10 @@ class _ChatPageState extends State<ChatPage> {
                   ),
                   Expanded(
                     child: TextField(
-                      controller: messageController,
+                      controller: message,
                       enabled: !sending,
                       minLines: 1,
                       maxLines: 5,
-                      onChanged: _onTextChanged,
                       onSubmitted: (_) => sendText(),
                       decoration: InputDecoration(
                         hintText: 'Type a message...',
